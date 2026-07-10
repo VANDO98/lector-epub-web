@@ -181,39 +181,84 @@ async def stream_tts(texto: str, voz: str):
 @app.get("/api/library")
 async def list_library():
     client = get_db_client()
+    rs = client.execute("SELECT b.id, b.title, b.author, b.source, b.drive_id, p.cap_idx, p.frag_idx FROM books b LEFT JOIN progress p ON b.id = p.book_id")
+    client.close()
+    
+    books = []
+    for r in rs.rows:
+        books.append({
+            "id": r[0],
+            "title": r[1],
+            "author": r[2],
+            "source": r[3],
+            "drive_id": r[4],
+            "progress": {"cap_idx": r[5] or 0, "frag_idx": r[6] or 0}
+        })
+    return books
+
+@app.post("/api/library")
+async def add_book(request: Request):
+    form = await request.form()
+    file = form.get("file")
+    if not file:
+        raise HTTPException(status_code=400, detail="No file uploaded")
+    
+    content = await file.read()
+    book_id = str(uuid.uuid4())
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as tmp:
+        tmp.write(content)
+        tmp_path = tmp.name
+
+    try:
+        book = epub.read_epub(tmp_path)
+    except:
+        os.remove(tmp_path)
+        raise HTTPException(status_code=400, detail="Invalid EPUB file")
+        
+    title = book.get_metadata('DC', 'title')
+    title = title[0][0] if title else "Sin Título"
+    author = book.get_metadata('DC', 'creator')
+    author = author[0][0] if author else "Desconocido"
+
+    cover_data = None
+    for item in book.get_items():
+        if item.get_type() == ebooklib.ITEM_COVER or item.id.lower() == 'cover':
+            cover_data = item.get_content()
+            break
+            
+    cover_b64 = base64.b64encode(cover_data).decode('utf-8') if cover_data else ""
+
+    client = get_db_client()
     client.execute("INSERT OR REPLACE INTO books (id, filename, title, author, cover, epub_path, drive_id, source, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                   [book_id, metadata["filename"], metadata["title"], metadata["author"], cover_base64, "tmp", drive_id, "drive", datetime.now().isoformat()])
+                   [book_id, file.filename, title, author, cover_b64, tmp_path, "", "local", datetime.now().isoformat()])
     client.close()
     
     return {"message": "Libro añadido", "id": book_id}
 
 @app.delete("/api/library/{book_id}")
 async def delete_book(book_id: str):
-    conn = get_db()
-    row = conn.execute("SELECT epub_path FROM books WHERE id = ?", (book_id,)).fetchone()
-    if row:
-        try:
-            os.remove(row["epub_path"])
-        except OSError:
-            pass
-    conn.execute("DELETE FROM books WHERE id = ?", (book_id,))
-    conn.execute("DELETE FROM progress WHERE book_id = ?", (book_id,))
-    conn.commit()
-    conn.close()
+    client = get_db_client()
+    client.execute("DELETE FROM books WHERE id = ?", [book_id])
+    client.execute("DELETE FROM progress WHERE book_id = ?", [book_id])
+    client.close()
     return {"message": "Eliminado"}
 
 @app.get("/api/library/{book_id}/open")
 async def open_book(book_id: str):
-    conn = get_db()
-    row = conn.execute("SELECT epub_path, title FROM books WHERE id = ?", (book_id,)).fetchone()
-    prog = conn.execute("SELECT cap_idx, frag_idx FROM progress WHERE book_id = ?", (book_id,)).fetchone()
-    conn.close()
+    client = get_db_client()
+    rs_book = client.execute("SELECT epub_path, title FROM books WHERE id = ?", [book_id])
+    rs_prog = client.execute("SELECT cap_idx, frag_idx FROM progress WHERE book_id = ?", [book_id])
+    client.close()
     
-    if not row:
+    if not rs_book.rows:
         raise HTTPException(404, "Libro no encontrado")
+        
+    row = rs_book.rows[0]
+    prog = rs_prog.rows[0] if rs_prog.rows else None
 
     try:
-        capitulos = parse_epub_chapters(row["epub_path"])
+        capitulos = parse_epub_chapters(row[0])
     except Exception as e:
         raise HTTPException(500, f"Error leyendo EPUB: {str(e)}")
 
@@ -221,24 +266,20 @@ async def open_book(book_id: str):
     
     return {
         "id": book_id,
-        "title": row["title"],
+        "title": row[1],
         "capitulos": [{"titulo": c["titulo"], "num_fragmentos": len(c["fragmentos"])} for c in capitulos],
-        "cap_idx": prog["cap_idx"] if prog else 0,
-        "frag_idx": prog["frag_idx"] if prog else 0
+        "cap_idx": prog[0] if prog else 0,
+        "frag_idx": prog[1] if prog else 0
     }
 
 @app.post("/api/library/{book_id}/progress")
 async def update_progress(book_id: str, cap_idx: int = Form(...), frag_idx: int = Form(...)):
-    conn = get_db()
-    conn.execute('''
-        INSERT INTO progress (book_id, cap_idx, frag_idx, updated_at)
-        VALUES (?, ?, ?, ?)
-        ON CONFLICT(book_id) DO UPDATE SET
-        cap_idx=excluded.cap_idx, frag_idx=excluded.frag_idx, updated_at=excluded.updated_at
-    ''', (book_id, cap_idx, frag_idx, datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
+    client = get_db_client()
+    client.execute("INSERT OR REPLACE INTO progress (book_id, cap_idx, frag_idx, updated_at) VALUES (?, ?, ?, ?)",
+                   [book_id, cap_idx, frag_idx, datetime.now().isoformat()])
+    client.close()
     return {"status": "ok"}
+
 
 # --- Reader Endpoints ---
 @app.get("/api/audio/{book_id}/{cap_idx}/{frag_idx}")
