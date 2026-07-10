@@ -40,7 +40,7 @@ app.add_middleware(
 )
 
 # --- Configuration & Initialization ---
-BOOKS_DIR = "books"
+BOOKS_DIR = "/tmp/books"
 os.makedirs(BOOKS_DIR, exist_ok=True)
 DB_PATH = "library.db"
 CREDENTIALS_FILE = "credentials.json"
