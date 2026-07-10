@@ -46,7 +46,7 @@ DB_PATH = "library.db"
 CREDENTIALS_FILE = "credentials.json"
 CLIENT_SECRETS_FILE = CREDENTIALS_FILE # Assuming user downloads it as credentials.json
 SCOPES = ['https://www.googleapis.com/auth/drive.file', 'https://www.googleapis.com/auth/drive.readonly']
-REDIRECT_URI = "http://localhost:8501/auth/callback"
+REDIRECT_URI = os.environ.get("REDIRECT_URI", "http://localhost:8501/auth/callback")
 
 
 TURSO_URL = os.environ.get("TURSO_URL", "libsql://epub-reader-vando98.aws-us-east-2.turso.io")
@@ -78,7 +78,15 @@ def init_db():
             updated_at TEXT
         )
     ''')
+    
+    client.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT
+        )
+    ''')
     client.close()
+
 
 
 init_db()
