@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Audiolibros Pro</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <link rel="stylesheet" href="/static/style_miniplayer.css">
+</head>
+<body>
+    
+    <!-- GLOBAL MINI PLAYER -->
+    <div id="mini-player" class="mini-player" onclick="navTo('reader')">
+        <div class="mini-cover"><img id="mini-cover-img" src=""></div>
+        <div class="mini-info">
+            <div id="mini-title" class="mini-title">Libro</div>
+            <div id="mini-cap" class="mini-cap">Capítulo 1</div>
+        </div>
+        <div class="mini-controls" onclick="event.stopPropagation()">
+            <button class="btn btn-small" onclick="togglePlayPause()" style="background:var(--accent); color:#000;">
+                <svg id="mini-play-icon" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <svg id="mini-pause-icon" viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2" style="width:16px;height:16px; display:none;"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- VISTA BIBLIOTECA -->
+    <div id="view-library" class="view active">
+        <header class="lib-header">
+            <div class="top-bar">
+                <button class="btn btn-small" onclick="showDriveModal()" style="background:var(--bg-surface2); display:flex; align-items:center; gap:0.5rem; color:var(--text-main);">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+                    Drive
+                </button>
+                <div class="logo">Biblioteca</div>
+                <button class="btn btn-small" onclick="syncDrive()" style="background:var(--bg-surface2); display:flex; align-items:center; gap:0.5rem; color:var(--text-main);" title="Sincronizar">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:16px;height:16px;"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    Sync
+                </button>
+            </div>
+            
+            <div class="filter-tabs">
+                <span class="tab active">Todos</span>
+                <span class="tab">Favoritos</span>
+                <span class="tab">Libros gratis</span>
+                <span class="tab" onclick="document.getElementById('file-upload').click()">Importar Local</span>
+                <input type="file" id="file-upload" accept=".epub" style="display:none" onchange="uploadLocal(this)">
+            </div>
+            
+            <div class="search-bar">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="lib-search" placeholder="Buscar en la biblioteca..." onkeyup="filterLibrary()">
+            </div>
+        </header>
+
+        <main class="book-list" id="library-grid"></main>
+    </div>
+
+    <!-- VISTA DETALLES -->
+    <div id="view-details" class="view">
+        <header class="detail-header">
+            <button class="back-btn" onclick="navTo('library')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <div class="header-title">Detalles del libro</div>
+            <button class="fav-btn" id="btn-add-fav">
+                <svg viewBox="0 0 24 24" fill="currentColor" stroke="currentColor" stroke-width="2"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
+            </button>
+        </header>
+
+        <div class="detail-content">
+            <div class="book-hero">
+                <div class="cover-wrapper">
+                    <img id="detail-cover" src="" alt="Cover">
+                    <div class="progress-ring">
+                        <svg viewBox="0 0 36 36"><path class="circle-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" /><path class="circle" id="detail-ring" stroke-dasharray="0, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" /></svg>
+                        <span id="detail-progress-pct">0%</span>
+                    </div>
+                </div>
+                <div class="book-info">
+                    <h2 id="detail-title">Título</h2>
+                    <p id="detail-author">Autor</p>
+                    <div class="stats">
+                        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/></svg> <span id="detail-chap-count">0</span> capítulos</span>
+                        <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg> ~<span id="detail-time">0h</span> en total</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="progress-section">
+                <p class="prog-text">Progreso de lectura <span class="highlight"><span id="detail-read-count">0</span> de <span id="detail-total-count">0</span> capítulos escuchados</span></p>
+                <div class="progress-bar-linear"><div class="fill" id="detail-prog-bar"></div></div>
+            </div>
+
+            <button class="main-action-btn" onclick="navToReader()">
+                <div class="play-icon"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg></div>
+                <div class="action-text">
+                    <strong>Seguir escuchando</strong>
+                    <span id="detail-current-chapter">Capítulo 1</span>
+                </div>
+            </button>
+
+            <div class="chapters-list-header">
+                <h3>Capítulos</h3>
+            </div>
+            <div class="chapters-list" id="detail-chapters"></div>
+        </div>
+    </div>
+
+    <!-- VISTA REPRODUCTOR -->
+    <div id="view-reader" class="view">
+        <div class="reader-bg" id="reader-bg"></div>
+        <div class="reader-overlay"></div>
+        
+        <header class="reader-header">
+            <button class="back-btn" onclick="navTo('details')">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg>
+            </button>
+            <div class="reader-titles">
+                <div id="reader-book-title" class="r-book">Libro</div>
+                <div id="reader-cap-title" class="r-cap">Capítulo 1</div>
+            </div>
+            <div style="width: 44px;"></div> <!-- Spacer to keep titles centered -->
+        </header>
+
+        <main class="reader-text-area" id="text-area"></main>
+
+        <div class="player-bottom">
+            <div class="player-slider">
+                <span id="player-time-curr">0:00</span>
+                <div class="slider-track" id="player-progress-track">
+                    <div class="slider-fill" id="player-progress-fill"></div>
+                    <div class="slider-thumb" id="player-progress-thumb"></div>
+                </div>
+                <span id="player-time-total">0:00</span>
+            </div>
+            
+            <div class="player-controls">
+                <button class="ctrl-btn" onclick="prevFragment()"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="19 20 9 12 19 4 19 20"/><line x1="5" y1="19" x2="5" y2="5" stroke="currentColor" stroke-width="2"/></svg></button>
+                <button class="play-pause-btn" id="play-btn">
+                    <svg viewBox="0 0 24 24" fill="currentColor" class="icon-play"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                </button>
+                <button class="ctrl-btn" onclick="nextFragment()"><svg viewBox="0 0 24 24" fill="currentColor"><polygon points="5 4 15 12 5 20 5 4"/><line x1="19" y1="5" x2="19" y2="19" stroke="currentColor" stroke-width="2"/></svg></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- MODAL DRIVE -->
+    <div id="drive-modal" class="modal">
+        <div class="modal-content">
+            <h3>Archivos en Drive</h3>
+            <button class="btn btn-primary" style="margin-bottom:1rem; width:100%;" onclick="loginDrive()">Conectar Cuenta Google</button>
+            <input type="text" id="drive-search-input" placeholder="Buscar .epub..." onkeyup="filterDriveFiles()" class="search-input">
+            <div id="drive-files-list" class="drive-list"></div>
+            <button class="btn" style="margin-top: 1rem; width: 100%;" onclick="document.getElementById('drive-modal').classList.remove('show')">Cerrar</button>
+        </div>
+    </div>
+
+    <!-- LOADING & TOAST -->
+    <div id="loading"><div class="spinner"></div><div id="loading-msg">Cargando...</div></div>
+    <div id="toast"></div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

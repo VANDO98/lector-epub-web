@@ -1,0 +1,21 @@
+# Local database and config
+library.db
+token.json
+credentials.json
+client_secret.json
+
+# Local storage
+books/
+audio/
+tmp/
+.temp/
+
+# Python
+__pycache__/
+*.pyc
+venv/
+env/
+.env
+
+# MacOS
+.DS_Store
