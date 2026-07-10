@@ -345,16 +345,40 @@ if os.path.exists(TOKEN_FILE):
     except Exception as e:
         print("No se pudo cargar token.json:", e)
 
+
+def get_flow():
+    creds_env = os.environ.get("GOOGLE_CREDENTIALS_JSON")
+    if creds_env:
+        client_config = json.loads(creds_env)
+        return Flow.from_client_config(client_config, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    elif os.path.exists(CLIENT_SECRETS_FILE):
+        return Flow.from_client_secrets_file(CLIENT_SECRETS_FILE, scopes=SCOPES, redirect_uri=REDIRECT_URI)
+    else:
+        raise HTTPException(500, "Configura GOOGLE_CREDENTIALS_JSON en Vercel o credentials.json local")
+
+def get_drive_creds():
+    client = get_db_client()
+    rs = client.execute("SELECT value FROM settings WHERE key = 'google_token'")
+    client.close()
+    if not rs.rows:
+        return None
+    try:
+        creds = Credentials.from_authorized_user_info(json.loads(rs.rows[0][0]), SCOPES)
+        if creds and creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request as GRequest
+            creds.refresh(GRequest())
+            # Save refreshed token
+            client = get_db_client()
+            client.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('google_token', ?)", [creds.to_json()])
+            client.close()
+        return creds
+    except:
+        return None
+
 @app.get("/auth/login")
 async def login():
-    if not os.path.exists(CLIENT_SECRETS_FILE):
-        raise HTTPException(500, "credentials.json no encontrado. Configura OAuth en Google Cloud.")
-    
-    flow = Flow.from_client_secrets_file(
-        CLIENT_SECRETS_FILE, scopes=SCOPES, redirect_uri=REDIRECT_URI
-    )
+    flow = get_flow()
     auth_url, state = flow.authorization_url(prompt='consent', access_type='offline')
-    # Guardamos el Flow COMPLETO (incluye code_verifier de PKCE)
     oauth_flows[state] = flow
     return RedirectResponse(auth_url)
 
@@ -368,21 +392,22 @@ async def callback(request: Request):
     if not state:
         raise HTTPException(400, "Parametro state faltante")
 
-    # Recuperar el Flow original (que tiene el code_verifier de PKCE)
     flow = oauth_flows.pop(state, None)
     if not flow:
         raise HTTPException(400, "Sesion OAuth expirada o invalida. Intenta conectar de nuevo.")
 
     try:
         auth_response = str(request.url)
-        # Asegurarse de que sea http (OAuthlib lo requiere para localhost)
         if auth_response.startswith("https://"):
             auth_response = "http://" + auth_response[8:]
         flow.fetch_token(authorization_response=auth_response)
         creds = flow.credentials
-        user_credentials["default"] = creds
-        with open(TOKEN_FILE, "w") as f_token:
-            f_token.write(creds.to_json())
+        
+        # Save to DB
+        client = get_db_client()
+        client.execute("INSERT OR REPLACE INTO settings (key, value) VALUES ('google_token', ?)", [creds.to_json()])
+        client.close()
+        
         return RedirectResponse("/?drive=connected")
     except Exception as e:
         import traceback
@@ -390,17 +415,16 @@ async def callback(request: Request):
 
 @app.get("/auth/status")
 async def auth_status():
-    is_connected = "default" in user_credentials and user_credentials["default"].valid
-    return {"connected": is_connected}
+    creds = get_drive_creds()
+    return {"connected": creds is not None and creds.valid}
 
 @app.get("/api/drive/files")
 async def list_drive_files():
-    if "default" not in user_credentials:
+    creds = get_drive_creds()
+    if not creds:
         raise HTTPException(401, "No conectado a Drive")
     
-    creds = user_credentials["default"]
     service = build('drive', 'v3', credentials=creds)
-    
     results = service.files().list(
         q="name contains '.epub' and trashed=false",
         pageSize=50,
@@ -412,44 +436,43 @@ async def list_drive_files():
 
 @app.post("/api/drive/import/{file_id}")
 async def import_drive_file(file_id: str):
-    if "default" not in user_credentials:
+    creds = get_drive_creds()
+    if not creds:
         raise HTTPException(401, "No conectado a Drive")
     
-    creds = user_credentials["default"]
     service = build('drive', 'v3', credentials=creds)
     
     file_metadata = service.files().get(fileId=file_id, fields='name').execute()
     filename = file_metadata.get('name', 'drive_book.epub')
     
     book_id = str(uuid.uuid4())
-    epub_path = os.path.join(BOOKS_DIR, f"{book_id}.epub")
     
     request = service.files().get_media(fileId=file_id)
-    fh = io.FileIO(epub_path, 'wb')
-    downloader = MediaIoBaseDownload(fh, request)
-    done = False
-    while done is False:
-        status, done = downloader.next_chunk()
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".epub") as tmp:
+        downloader = MediaIoBaseDownload(tmp, request)
+        done = False
+        while done is False:
+            status, done = downloader.next_chunk()
+        tmp_path = tmp.name
         
     try:
-        title, author, cover = extract_epub_metadata_and_cover(epub_path)
+        title, author, cover = extract_epub_metadata_and_cover(tmp_path)
     except Exception as e:
-        os.remove(epub_path)
+        os.remove(tmp_path)
         raise HTTPException(422, f"Error parseando EPUB de Drive: {e}")
 
-    conn = get_db()
-    conn.execute('''
-        INSERT INTO books (id, filename, title, author, cover, epub_path, drive_id, source, added_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    ''', (book_id, filename, title, author, cover, epub_path, file_id, "drive", datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
+    client = get_db_client()
+    client.execute("INSERT OR REPLACE INTO books (id, filename, title, author, cover, epub_path, drive_id, source, added_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                   [book_id, filename, title, author, cover, tmp_path, file_id, "drive", datetime.now().isoformat()])
+    client.close()
     
     return {"message": "Libro importado de Drive", "id": book_id}
 
 @app.post("/api/drive/sync")
 async def sync_progress_to_drive():
-    if "default" not in user_credentials:
+    creds = get_drive_creds()
+    if not creds:
         raise HTTPException(401, "No conectado a Drive")
         
     client = get_db_client()
@@ -459,10 +482,7 @@ async def sync_progress_to_drive():
     
     sync_data = {r["book_id"]: {"cap_idx": r["cap_idx"], "frag_idx": r["frag_idx"]} for r in progress_rows}
     
-    creds = user_credentials["default"]
     service = build('drive', 'v3', credentials=creds)
-    
-    # Check if sync file exists
     results = service.files().list(q="name='lector_epub_sync.json' and trashed=false").execute()
     items = results.get('files', [])
     
@@ -484,10 +504,10 @@ async def sync_progress_to_drive():
 
 @app.get("/api/drive/restore")
 async def restore_progress_from_drive():
-    if "default" not in user_credentials:
+    creds = get_drive_creds()
+    if not creds:
         raise HTTPException(401, "No conectado a Drive")
         
-    creds = user_credentials["default"]
     service = build('drive', 'v3', credentials=creds)
     
     results = service.files().list(q="name='lector_epub_sync.json' and trashed=false").execute()
@@ -506,16 +526,11 @@ async def restore_progress_from_drive():
         
     sync_data = json.loads(fh.getvalue().decode('utf-8'))
     
-    conn = get_db()
+    client = get_db_client()
     for book_id, p in sync_data.items():
-        conn.execute('''
-            INSERT INTO progress (book_id, cap_idx, frag_idx, updated_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(book_id) DO UPDATE SET
-            cap_idx=excluded.cap_idx, frag_idx=excluded.frag_idx, updated_at=excluded.updated_at
-        ''', (book_id, p["cap_idx"], p["frag_idx"], datetime.now().isoformat()))
-    conn.commit()
-    conn.close()
+        client.execute("INSERT OR REPLACE INTO progress (book_id, cap_idx, frag_idx, updated_at) VALUES (?, ?, ?, ?)",
+                       [book_id, p["cap_idx"], p["frag_idx"], datetime.now().isoformat()])
+    client.close()
     
     return {"message": "Progreso restaurado"}
 
