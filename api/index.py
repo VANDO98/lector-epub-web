@@ -53,7 +53,8 @@ TURSO_URL = os.environ.get("TURSO_URL", "libsql://epub-reader-vando98.aws-us-eas
 TURSO_TOKEN = os.environ.get("TURSO_TOKEN", "eyJhbGciOiJFZERTQSIsInR5cCI6IkpXVCJ9.eyJhIjoicnciLCJpYXQiOjE3ODM2NTM0MTcsImlkIjoiMDE5ZjRhMDctMTYwMS03NGU1LWE1MzYtMjU4ZmQ0YzEwN2UyIiwia2lkIjoiQzRfcmlwM2hMX05abldwa0pjNG5LLUtjMGRLTlNYeVUySTJma0JBbVZ2VSIsInJpZCI6Ijg4YzY5MTEyLTQyYzctNGRiYS04YWU0LWI2OTZmYTM3ZDVjNiJ9.zALbYbemd7cukeH4s0VHej5MfM85_F3p5STyuEU9lC-K5luM4aGxGXr6OlwOgmkBahXcKNBhnimkm0z8yI5jAw")
 
 def get_db_client():
-    return libsql_client.create_client_sync(url=TURSO_URL, auth_token=TURSO_TOKEN)
+    url = TURSO_URL.replace("libsql://", "https://")
+    return libsql_client.create_client_sync(url=url, auth_token=TURSO_TOKEN)
 
 def init_db():
     client = get_db_client()
